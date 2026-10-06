@@ -134,6 +134,10 @@ class OIDCAuthBackend(BaseAuthBackend):
         if id_token.get("nonce") != expected_nonce:
             logger.warning("OIDC ID token nonce does not match the login request")
             return [None, None]
+
+        if (userinfo["sub"] != id_token["sub"]):
+            logger.warning("OIDC UserInfo subject does not match the ID token subject")
+            return [None, None]
         # end MITO custom
 
         user_data = {

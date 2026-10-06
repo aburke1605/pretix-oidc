@@ -59,9 +59,11 @@ class OIDCAuthBackend(BaseAuthBackend):
 
     def authentication_url(self, request):
         oidc_state = rndstr()
+        oidc_nonce = rndstr() # MITO custom
         request.session["oidc_state"] = {
             oidc_state: {
                 "next": request.GET.get("next", None),
+                "nonce": oidc_nonce, # MITO custom
                 "generated_on": int(time.time()),
             }
         }
@@ -73,6 +75,7 @@ class OIDCAuthBackend(BaseAuthBackend):
                 "scope": self.scopes,
                 "redirect_uri": self.redirect_uri(request),
                 "state": oidc_state,
+                "nonce": oidc_nonce, # MITO custom
             }
         )
 
@@ -104,6 +107,13 @@ class OIDCAuthBackend(BaseAuthBackend):
         if oidc_state[response_state]["generated_on"] < time.time() - 5 * 60:
             return [None, None]
 
+        # begin MITO custom
+        expected_nonce = oidc_state[response_state]["nonce"]
+        if not expected_nonce:
+            logger.warning("OIDC callback session does not contain a nonce")
+            return [None, None]
+        # end MITO custom
+
         request.session["oidc_next_url"] = oidc_state[response_state]["next"]
 
         access_token_response = self.client.do_access_token_request(
@@ -119,6 +129,13 @@ class OIDCAuthBackend(BaseAuthBackend):
         userinfo = self.client.do_user_info_request(state=auth_response["state"])
 
         id_token = access_token_response["id_token"]
+
+        # begin MITO custom
+        if id_token.get("nonce") != expected_nonce:
+            logger.warning("OIDC ID token nonce does not match the login request")
+            return [None, None]
+        # end MITO custom
+
         user_data = {
             "uuid": userinfo[config.get("oidc", "unique_attribute", fallback="sub")],
             "email": userinfo["email"],

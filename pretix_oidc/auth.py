@@ -1,5 +1,6 @@
 import logging
 import time
+from urllib.parse import urlsplit
 from django.urls import reverse
 from oic import rndstr
 from oic.oic import Client
@@ -14,6 +15,67 @@ from pretix.settings import config
 
 logger = logging.getLogger(__name__)
 
+# begin MITO custom
+def _validated_next_url(request, next_url):
+    """
+    Return a safe local redirect target or the Pretix control landing page.
+
+    Accepted:
+        /control/
+        /control/event/mito/example/
+        /control/?page=2
+
+    Rejected:
+        https://attacker.example/
+        //attacker.example/
+        javascript:alert(1)
+        control/
+        backslash-based variants
+        control characters
+    """
+    fallback = reverse("control:index")
+
+    if not next_url or not isinstance(next_url, str):
+        return fallback
+
+    # keep the limit conservative to avoid abnormal redirect values
+    if len(next_url) > 2048:
+        return fallback
+
+    # reject control characters, including CR/LF header-injection attempts
+    if any(ord(character) < 32 or ord(character) == 127 for character in next_url):
+        return fallback
+
+    # browsers and proxies can interpret backslashes inconsistently
+    if "\\" in next_url:
+        return fallback
+
+    try:
+        parsed = urlsplit(next_url)
+    except ValueError:
+        return fallback
+
+    # require a relative URL without a scheme or network location
+    if parsed.scheme or parsed.netloc:
+        return fallback
+
+    # require an absolute path on the current origin
+    if not parsed.path.startswith("/"):
+        return fallback
+
+    # a path beginning with // can be interpreted as scheme-relative
+    if parsed.path.startswith("//"):
+        return fallback
+
+    # restrict redirects to the Pretix backend
+    if not (
+        parsed.path == "/control"
+        or parsed.path.startswith("/control/")
+    ):
+        return fallback
+
+    return next_url
+# end MITO custom
 
 class OIDCAuthBackend(BaseAuthBackend):
     def __init__(self):
@@ -59,10 +121,18 @@ class OIDCAuthBackend(BaseAuthBackend):
 
     def authentication_url(self, request):
         oidc_state = rndstr()
-        oidc_nonce = rndstr() # MITO custom
+
+        # begin MITO custom
+        oidc_nonce = rndstr()
+        next_url = _validated_next_url(
+            request,
+            request.GET.get("next", None),
+        )
+        # end MITO custom
+
         request.session["oidc_state"] = {
             oidc_state: {
-                "next": request.GET.get("next", None),
+                "next": next_url, # MITO custom
                 "nonce": oidc_nonce, # MITO custom
                 "generated_on": int(time.time()),
             }
@@ -85,7 +155,8 @@ class OIDCAuthBackend(BaseAuthBackend):
         return request.build_absolute_uri(reverse("plugins:pretix_oidc:oidc_callback"))
 
     def get_next_url(self, request):
-        return request.session.pop("oidc_next_url", None)
+        next_url = request.session.pop("oidc_next_url", None)
+        return _validated_next_url(request, next_url)
 
     def process_callback(self, request):
         auth_response = self.client.parse_response(
@@ -112,9 +183,12 @@ class OIDCAuthBackend(BaseAuthBackend):
         if not expected_nonce:
             logger.warning("OIDC callback session does not contain a nonce")
             return [None, None]
-        # end MITO custom
 
-        request.session["oidc_next_url"] = oidc_state[response_state]["next"]
+        request.session["oidc_next_url"] = _validated_next_url(
+            request,
+            oidc_state[response_state]["next"],
+        )
+        # end MITO custom
 
         access_token_response = self.client.do_access_token_request(
             state=auth_response["state"],

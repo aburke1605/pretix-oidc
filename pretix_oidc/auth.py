@@ -33,7 +33,7 @@ def _validated_next_url(next_url):
         backslash-based variants
         control characters
     """
-    fallback = reverse("control:index")
+    fallback = "/control/"
 
     if not next_url or not isinstance(next_url, str):
         return fallback

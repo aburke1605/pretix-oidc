@@ -14,8 +14,8 @@ maintainers = [
 ]
 
 dependencies = [
-    "dictlib",
-    "oic",
+    "dictlib==1.1.5",
+    "oic==1.7.0",
 ]
 
 [project.entry-points."pretix.plugin"]

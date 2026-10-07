@@ -16,7 +16,7 @@ from pretix.settings import config
 logger = logging.getLogger(__name__)
 
 # begin MITO custom
-def _validated_next_url(request, next_url):
+def _validated_next_url(next_url):
     """
     Return a safe local redirect target or the Pretix control landing page.
 
@@ -124,10 +124,7 @@ class OIDCAuthBackend(BaseAuthBackend):
 
         # begin MITO custom
         oidc_nonce = rndstr()
-        next_url = _validated_next_url(
-            request,
-            request.GET.get("next", None),
-        )
+        next_url = _validated_next_url(request.GET.get("next", None))
         # end MITO custom
 
         request.session["oidc_state"] = {
@@ -156,7 +153,7 @@ class OIDCAuthBackend(BaseAuthBackend):
 
     def get_next_url(self, request):
         next_url = request.session.pop("oidc_next_url", None)
-        return _validated_next_url(request, next_url)
+        return _validated_next_url(next_url)
 
     def process_callback(self, request):
         auth_response = self.client.parse_response(
@@ -184,10 +181,7 @@ class OIDCAuthBackend(BaseAuthBackend):
             logger.warning("OIDC callback session does not contain a nonce")
             return [None, None]
 
-        request.session["oidc_next_url"] = _validated_next_url(
-            request,
-            oidc_state[response_state]["next"],
-        )
+        request.session["oidc_next_url"] = _validated_next_url(oidc_state[response_state]["next"])
         # end MITO custom
 
         access_token_response = self.client.do_access_token_request(
